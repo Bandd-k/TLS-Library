@@ -14,14 +14,14 @@ DH_PRIVATE_KEY_SIZE = 256
 
 use32
 
-    db  'MENUET01'  ; signature
-    dd  1       ; header version
-    dd  start       ; entry point
-    dd  i_end       ; initialized size
-    dd  mem+4096    ; required memory
-    dd  mem+4096    ; stack pointer
-    dd  hostname    ; parameters
-    dd  0       ; path
+    db	'MENUET01'  ; signature
+    dd	1	; header version
+    dd	start	    ; entry point
+    dd	i_end	    ; initialized size
+    dd	mem+4096    ; required memory
+    dd	mem+4096    ; stack pointer
+    dd	hostname    ; parameters
+    dd	0	; path
 
 include 'macros.inc'
 purge mov,add,sub
@@ -43,27 +43,27 @@ include 'random.inc'
 ;include 'sha256.inc'
 
 start:
-    mcall   68, 11      ; Init heap
-    DEBUGF  1, "TLS: Loading libraries\n"
-    stdcall dll.Load, @IMPORT
-    test    eax, eax
-    jnz exit
+	mcall	68, 11	    ; Init heap
+	DEBUGF	1, "TLS: Loading libraries\n"
+	stdcall dll.Load, @IMPORT
+	test	eax, eax
+	jnz exit
 
-    DEBUGF  1, "TLS: Init PRNG\n"
+	DEBUGF	1, "TLS: Init PRNG\n"
     call    init_random
 
-    DEBUGF  1, "TLS: Init Console\n"
-    invoke  con_start, 1
-    invoke  con_init, 80, 25, 80, 25, title
+	DEBUGF	1, "TLS: Init Console\n"
+	invoke	con_start, 1
+	invoke	con_init, 80, 25, 80, 25, title
 
 ; Check for parameters
 ;       cmp     byte[hostname], 0
 ;       jne     resolve
 
 main:
-    invoke  con_cls
+	invoke	con_cls
 ; Welcome user
-    invoke  con_write_asciiz, str1
+	invoke	con_write_asciiz, str1
 
 prompt:
 ; write prompt
@@ -73,9 +73,9 @@ prompt:
     invoke  con_gets, esi, 256
 ; check for exit
     test    eax, eax
-    jz  exit
+    jz	exit
     cmp byte[esi], 10
-    jz  exit
+    jz	exit
 
 resolve:
     mov [sockaddr1.port], 22 shl 8
@@ -85,9 +85,9 @@ resolve:
   @@:
     lodsb
     cmp al, ':'
-    je  .do_port
+    je	.do_port
     cmp al, 0x20
-    ja  @r
+    ja	@r
     mov byte[esi-1], 0
     jmp .done
 
@@ -100,9 +100,9 @@ resolve:
     cmp al, 0x20
     jbe .port_done
     sub al, '0'
-    jb  hostname_error
+    jb	hostname_error
     cmp al, 9
-    ja  hostname_error
+    ja	hostname_error
     lea ebx, [ebx*4 + ebx]
     shl ebx, 1
     add ebx, eax
@@ -148,7 +148,7 @@ resolve:
 ; Create socket
     mcall   socket, AF_INET4, SOCK_STREAM, 0
     cmp eax, -1
-    jz  socket_err
+    jz	socket_err
     mov [socketnum], eax
 
 ; Connect
@@ -200,7 +200,7 @@ handshake:
 
 ;-----------------------------------------------------
     DEBUGF  1, "TLS: Handshake process starting\n"
-    mov     dword [clienthello], 0x010316 ; protocol version, plus 0x16 (22) handshake (RFC says 3, 1 or 3,0 for record-layer clienthello)
+    mov     dword [clienthello], 0x030316 ; protocol version, plus 0x16 (22) handshake (RFC says 3, 1 or 3,0 for record-layer clienthello)
     mov eax,43+ciphersuites.length
     mov     byte [clienthello+3], ah
     mov     byte [clienthello+4], al
@@ -242,17 +242,40 @@ handshake:
 
     mcall   send, [socketnum], clienthello, 50, 0
     cmp eax, -1
-    je      socket_err
-    mcall   recv, [socketnum], clienthello, 50, 0
+    je	    socket_err
+    mcall   recv, [socketnum], serverAnswer, 74, 0
     cmp eax, -1
-    je      socket_err
-    DEBUGF  1, "TLS: recv %s\n",clienthello
+    je	    socket_err
+    ;check for version
+    cmp     dword [serverAnswer],0x030316
+    jne     serverhello_error
+    cmp     byte [serverAnswer+5],2
+    jne     serverhello_error
+
+    ;save sessionid, it is the same size every time!
+    mov     eax,dword [serverAnswer+44]
+    DEBUGF  1, "TLS: recv sessionId %x\n",eax
+    mov     dword [sessionid],eax
+    mov     eax,dword [serverAnswer+48]
+    mov     dword [sessionid+4],eax
+    mov     eax,dword [serverAnswer+52]
+    mov     dword [sessionid+8],eax
+    mov     eax,dword [serverAnswer+56]
+    mov     dword [sessionid+12],eax
+    mov     eax,dword [serverAnswer+60]
+    mov     dword [sessionid+16],eax
+    mov     eax,dword [serverAnswer+64]
+    mov     dword [sessionid+20],eax
+    mov     eax,dword [serverAnswer+68]
+    mov     dword [sessionid+24],eax
+    mov     eax,dword [serverAnswer+72]
+    mov     dword [sessionid+28],eax
 
 
 exit:
-        DEBUGF  1, "TLS: Exiting\n"
-        mcall   close, [socketnum]
-        mcall   -1
+	DEBUGF	1, "TLS: Exiting\n"
+	mcall	close, [socketnum]
+	mcall	-1
 
 socket_err:
     DEBUGF  1, "TLS: socket error %d\n", ebx
@@ -268,29 +291,35 @@ hostname_error:
     invoke  con_write_asciiz, str10
     jmp prompt
 
+serverhello_error:
+    invoke  con_write_asciiz, str12
+    jmp prompt
+
+
 ; data
-title   db  'TLS',0
-str1    db  'TLS client for KolibriOS',10,10,\
-        'Please enter URL of TLS server (host:port)',10,10,0
-str2    db  '> ',0
-str3    db  'Connecting to ',0
-str4    db  10,0
-str5    db  'Name resolution failed.',10,10,0
-str6    db  'A socket error occured.',10,10,0
-str7    db  'A protocol error occured.',10,10,0
-str8    db  ' (',0
-str9    db  ')',10,0
-str10   db  'Invalid hostname.',10,10,0
-str11   db  10,'Remote host closed the connection.',10,10,0
+title	db  'Secure Shell',0
+str1	db  'TLS client for KolibriOS',10,10,\
+	'Please enter URL of TLS server (host:port)',10,10,0
+str2	db  '> ',0
+str3	db  'Connecting to ',0
+str4	db  10,0
+str5	db  'Name resolution failed.',10,10,0
+str6	db  'A socket error occured.',10,10,0
+str7	db  'A protocol error occured.',10,10,0
+str8	db  ' (',0
+str9	db  ')',10,0
+str10	db  'Invalid hostname.',10,10,0
+str11	db  10,'Remote host closed the connection.',10,10,0
+str12	db  'Server Hello error.',10,10,0
 
 sockaddr1:
     dw AF_INET4
   .port dw 0
-  .ip   dd 0
+  .ip	dd 0
     rb 10
 
 ciphersuites:
-        db  0x00, 0x2f  ; TLS_RSA_WITH_AES_128_CBC_SHA          ; spec says we MUST support this one.
+	db  0x00, 0x2f	; TLS_RSA_WITH_AES_128_CBC_SHA          ; spec says we MUST support this one.
     .length = $ - ciphersuites
 
 
@@ -303,12 +332,12 @@ library network, 'network.obj', \
     console, 'console.obj';, \
 ;        libcrash, 'libcrash.obj'
 
-import  network, \
+import	network, \
     getaddrinfo, 'getaddrinfo', \
     freeaddrinfo, 'freeaddrinfo', \
     inet_ntoa, 'inet_ntoa'
 
-import  console, \
+import	console, \
     con_start, 'START', \
     con_init, 'con_init', \
     con_write_asciiz, 'con_write_asciiz', \
@@ -327,6 +356,8 @@ i_end:
 IncludeIGlobals
 socketnum   dd ?
 clienthello rb 64
+sessionid   rb 32
 hostname    rb 1024
+serverAnswer rb 4048
 
 mem:
