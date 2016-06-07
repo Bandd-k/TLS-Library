@@ -234,17 +234,18 @@ handshake:
     mov     byte [clienthello+43], 0
     mov     byte [clienthello+44], 0
     mov     byte [clienthello+45], 2
+    ; cipher suit!
     mov     byte [clienthello+46], 0x00
     mov     byte [clienthello+47], 0x2f
     mov     byte [clienthello+48], 1
     mov     byte [clienthello+49], 0
-    mov eax,50
-
+    mov     eax,50
+    ;send client hello
     mcall   send, [socketnum], clienthello, 50, 0
-    cmp eax, -1
+    cmp     eax, -1
     je	    socket_err
-    mcall   recv, [socketnum], serverAnswer, 74, 0
-    cmp eax, -1
+    mcall   recv, [socketnum], serverAnswer, 79, 0 ;always constant size except erorr, add handler!
+    cmp     eax, -1
     je	    socket_err
     ;check for version
     cmp     dword [serverAnswer],0x030316
@@ -270,6 +271,70 @@ handshake:
     mov     dword [sessionid+24],eax
     mov     eax,dword [serverAnswer+72]
     mov     dword [sessionid+28],eax
+    ;sessionid saved
+    ; parse certificate message
+    mcall   recv, [socketnum], serverAnswer, 9, 0
+    cmp     eax, -1
+    je	    socket_err
+    mov     eax,dword[serverAnswer]
+
+    cmp     byte [serverAnswer+5],0x0b
+    jne     certificate_error
+    mov     eax, dword[serverAnswer+6]
+    bswap   eax
+    shr     eax,8
+    ;read certificate length
+    mov     ecx,eax
+    push    ecx
+    DEBUGF  1, "TLS: lengh of certificate %d\n",eax
+    ;read certificate, site for reading der format http://www.lapo.it/asn1js/
+    mcall   recv, [socketnum], serverAnswer, [eax], 0
+    cmp     eax, -1
+    je	    socket_err
+    ; start looking for public key from serverAnswer+3
+    mov     ebx,3
+    pop     ecx
+    sub     ecx,6
+    .loop1:
+    ; find object 1.2.840.113549.1.1.1 in ASN corresponds public key in HEX (06092A864886F70D010101)
+
+    cmp     dword[serverAnswer+ebx],0x0101010d
+    je	    .find
+    inc     ebx
+    dec     ecx
+    cmp     ecx,0
+    jne     .loop1
+    ; not find public key go to error
+    jmp     certificate_error
+
+    .find:
+    ; check for 864886F7
+    cmp     dword[serverAnswer+ebx-4],0xf7864886
+    jne     certificate_error
+    ; pubK start from ebx+15, some hardcode! check it later! 4096 bit hardcode too.
+    mov     ecx,0
+    add     ebx,19
+    .loop2:
+    mov     eax,dword[serverAnswer+ebx]
+    mov     dword[RSApublicK+ecx],eax
+    add     ecx,4
+    add     ebx,4
+    cmp     ecx,512
+    jne     .loop2
+    ;RSApublicK was saved
+    add     ebx,2
+    mov     eax,dword[serverAnswer+ebx]
+    shr     eax,8
+    mov     dword[exponent],eax
+    DEBUGF  1, "TLS: exponent %d\n",eax
+    mov     eax,dword[RSApublicK]
+    DEBUGF  1, "TLS: PublicKey was saved %x\n",eax
+
+
+
+
+
+
 
 
 exit:
@@ -287,12 +352,16 @@ dns_error:
     invoke  con_write_asciiz, str5
     jmp prompt
 
+
 hostname_error:
     invoke  con_write_asciiz, str10
     jmp prompt
 
 serverhello_error:
     invoke  con_write_asciiz, str12
+    jmp prompt
+certificate_error:
+    invoke  con_write_asciiz, str13
     jmp prompt
 
 
@@ -311,6 +380,7 @@ str9	db  ')',10,0
 str10	db  'Invalid hostname.',10,10,0
 str11	db  10,'Remote host closed the connection.',10,10,0
 str12	db  'Server Hello error.',10,10,0
+str13	db  'certificate error.',10,10,0
 
 sockaddr1:
     dw AF_INET4
@@ -359,5 +429,9 @@ clienthello rb 64
 sessionid   rb 32
 hostname    rb 1024
 serverAnswer rb 4048
+RSApublicK rb 512
+second	rb 10
+exponent rb 4
+
 
 mem:
