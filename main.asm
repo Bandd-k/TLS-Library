@@ -429,9 +429,9 @@ clienthello rb 64
 sessionid   rb 32
 hostname    rb 1024
 serverAnswer rb 4048
-RSApublicK rb 512
+RSApublicK rb 512 ; p*q
 second	rb 10
-exponent rb 4
+exponent rb 4 ; e
 
 
 mem:
