@@ -18,76 +18,35 @@
 ; WARNING!
 ; USING SHA256 and HMAC in one time can cause errors
 
-;example:
-;input      db 'hial',0
-;inp2       db 'al',0
-;secret     db 'okok',0
-;answer     rb 50
+; -------example----------
+; input      db 'hial',0
+; inp2       db 'al',0
+; secret     db 'okok',0
+; answer     rb 50
 ; check:
-; ;    mov    ebx,secret
-; ;    mov    edx,4
-; ;    mov    eax,input
-; ;    mov    edi,4
-; ;    call   hmac
-
+;     mov    ebx,secret
+;     mov    edx,4
+;     call hmac_setkey
+;     mov    eax,input
+;     mov    edi,4
+;     call   hmac_hash
+;     mov    edi,answer
+;     call   hmac_final
+;     stdcall dump_256bit_hex, answer
+;     ret
 
 b = 64 ; block_size
 l = 32 ; output length for SHA256
-ipad    rb      4096
-opad    rb      4096
-temporaryData rb 100
+ipad    rb      b
+opad    rb      b
+temporaryData rb b
 
+; HOWTO use
+; call hmac_setkey-> call hmac_hash->call hmac_final
 
-hmac:
-; first version of  HMAC (1 function)
-; input ebx->key,edx=key_length, eax->text, edi=text_length
-; output ebx->answer
-        push    edi
-        push    eax
-        call    sha256_init
-        call    calculate_new_key
-; opad->newKey,ipad->newKey
-        mov     edi,ipad
-        mov     edx,0x36363636
-        call    make_xor
-        mov     edi,opad
-        mov     edx,0x5c5c5c5c
-        call    make_xor
-        stdcall dump_512bit_hex, opad
-        stdcall dump_512bit_hex, ipad
-
-; opad->(newKey xor opad),ipad->(newKey xor ipad)
-        mov     esi,ipad
-        mov     edx,b
-        call    sha256_update
-        pop     eax
-        pop     edi
-        mov     edx,edi
-        mov     esi,eax
-        call    sha256_update
-        mov     edi,ipad
-        call    sha256_final
-; ipad=H((Key xor ipad)||text)
-        DEBUGF  1,"H((Key xor ipad)||text) = \n"
-        stdcall dump_256bit_hex, ipad
-        call    sha256_init
-        mov     edx,b
-        mov     esi,opad
-        call    sha256_update
-        mov     edx,l
-        mov     esi,ipad
-        call    sha256_update
-        mov     edi,ipad
-        call    sha256_final
-        DEBUGF  1, "answer\n"
-        stdcall dump_256bit_hex, ipad
-        mov     ebx, ipad
-        ret
-
-; Second option (call hmac_setkey-> call hmac_hash->call hmac final_data)
-; function to set new key input 
-; ebx->key,edx=key_length
+; function to set new key
 hmac_setkey:
+; ebx->key,edx=key_lengths
         pushad
         call    calculate_new_key
 ; opad->newKey,ipad->newKey
@@ -102,8 +61,9 @@ hmac_setkey:
         popad
         ret
 
-; eax->text, edi=text_length
+; function to add first data
 hmac_hash:
+; eax->text, edi=text_length
         push    eax
         push    edi
         call    sha256_init
@@ -116,9 +76,9 @@ hmac_hash:
         mov     esi,eax
         call    sha256_update
         ret
-; eax->text, edi=text_length
-; add more data to HMAC
+; function to add more data to HMAC
 hmac_add:
+; eax->text, edi=text_length
         pushad
         mov     edx,edi
         mov     esi,eax
@@ -126,8 +86,9 @@ hmac_add:
         popad
         ret
 
-;input edi->answerbuffer
+; finalize data
 hmac_final:
+; input edi->answerbuffer
         pushad
         mov     edi,temporaryData
         call    sha256_final
@@ -151,51 +112,40 @@ calculate_new_key:
 ; output eax -> newKey with 64 length
         push    ebx
         push    edx
-.start:
-        call    sha256_init
-; copy key to ipad
-        mov     edi,ipad
-        mov     ecx,0
-@@:
-        mov     eax,[ebx+ecx]
-        add     ecx,1
-        stosb
-        cmp     ecx,edx
-        jne     @b
         cmp     edx,b
-        je      .equal
-        jnl     .more
-.less:
-; fill zeros from right
-        mov     eax,0
-@@:
-        add     ecx,1
-        stosb
-        cmp     ecx,b
-        jne     @b
+        jnl     .hash_it
+; Key is smaller then or equal to key size,
+; copy key to ipad
+        mov     esi,ebx
+        mov     edi, ipad
+        mov     ecx, edx
+        rep     movsb
+        mov     ecx, b
+        sub     ecx, edx
+.add_zeros:
+; Given key is smaller then key size,
+; append zeros to the key
+        xor     al, al
+        rep     stosb
         jmp     .return
-.more:
+
+.hash_it:
+        call    sha256_init
         mov     esi,ebx
         call    sha256_update
         mov     edi,ipad
         call    sha256_final
 ; edi - answer, 32 bytes
-        mov     ebx,ipad
-        mov     edx,l
-        jmp     .start
-.equal:
-        jmp     .return
+        add     edi,l
+        mov     ecx,b-l
+        jmp     .add_zeros
 .return:
 ; copy new key to second buffer!!
-        mov     ebx,ipad
-        mov     edi,opad
-        mov     ecx,0
-@@:
-        mov     eax,[ebx+ecx]
-        add     ecx,4
-        stosd
-        cmp     ecx,b
-        jne     @b
+  ; copy generated key to second buffer
+        mov     esi, ipad
+        mov     edi, opad
+        mov     ecx, b/4
+        rep movsd
         pop     edx
         pop     ebx
         ret
@@ -205,9 +155,7 @@ make_xor:
 ; change edi
         mov     ecx,0
         @@:
-        mov     eax,dword[edi+ecx]
-        xor     eax,edx
-        stosd
+        xor     dword[edi+ecx],edx
         add     ecx,4
         cmp     ecx,b
         jne     @b
