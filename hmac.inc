@@ -18,56 +18,64 @@
 ; WARNING!
 ; USING SHA256 and HMAC in one time can cause errors
 
-; -------example----------
+;; -------example----------
 ; input      db 'hial',0
 ; inp2       db 'al',0
 ; secret     db 'okok',0
 ; answer     rb 50
+; buffer     rb 2*b
 ; check:
 ;     mov    ebx,secret
 ;     mov    edx,4
-;     call hmac_setkey
+;     stdcall hmac_setkey,buffer
 ;     mov    eax,input
 ;     mov    edi,4
-;     call   hmac_hash
+;     stdcall   hmac_hash,buffer
 ;     mov    edi,answer
-;     call   hmac_final
-;     stdcall dump_256bit_hex, answer
+;     stdcall   hmac_final,buffer
+;     stdcall   dump_256bit_hex, answer
 ;     ret
 
 b = 64 ; block_size
 l = 32 ; output length for SHA256
-ipad    rb      b
-opad    rb      b
-temporaryData rb b
 
+struct hmac_context
+        ipad    rb      b
+        opad    rb      b
+ends
 ; HOWTO use
 ; call hmac_setkey-> call hmac_hash->call hmac_final
+; All functions need one shared _tmpbuffer with 64(2*b) bytes!
+; Each function needs the same buffer with other functions!
 
 ; function to set new key
-hmac_setkey:
+proc hmac_setkey _tmpbuffer
 ; ebx->key,edx=key_lengths
+; _tmpbuffer should be at least 64(2*b) bytes!
         pushad
-        call    calculate_new_key
+        stdcall calculate_new_key,[_tmpbuffer]
 ; opad->newKey,ipad->newKey
-        mov     edi,ipad
+        mov     eax,[_tmpbuffer]
+        lea     edi,[eax+hmac_context.ipad]
         mov     edx,0x36363636
         call    make_xor
-        mov     edi,opad
+        lea     edi,[eax+hmac_context.opad]
         mov     edx,0x5c5c5c5c
         call    make_xor
-        stdcall dump_512bit_hex, opad
-        stdcall dump_512bit_hex, ipad
+        stdcall dump_512bit_hex, edi
         popad
         ret
+endp
 
 ; function to add first data
-hmac_hash:
+proc hmac_hash _tmpbuffer
 ; eax->text, edi=text_length
+; _tmpbuffer should be at least 64(2*b) bytes!
         push    eax
         push    edi
         call    sha256_init
-        mov     esi,ipad
+        mov     eax,[_tmpbuffer]
+        lea     esi,[eax+hmac_context.ipad]
         mov     edx,b
         call    sha256_update
         pop     edi
@@ -76,8 +84,9 @@ hmac_hash:
         mov     esi,eax
         call    sha256_update
         ret
+endp
 ; function to add more data to HMAC
-hmac_add:
+proc hmac_add _tmpbuffer
 ; eax->text, edi=text_length
         pushad
         mov     edx,edi
@@ -85,31 +94,36 @@ hmac_add:
         call    sha256_update
         popad
         ret
+endp
 
 ; finalize data
-hmac_final:
+proc hmac_final _tmpbuffer
 ; input edi->answerbuffer
+; _tmpbuffer should be at least 64(2*b) bytes!
         pushad
-        mov     edi,temporaryData
+; push answer on stack
+        sub esp,b
+        mov     edi,esp
         call    sha256_final
 ; ipad=H((Key xor ipad)||text)
-        DEBUGF  1,"H((Key xor ipad)||text) = \n"
-        stdcall dump_256bit_hex, temporaryData
         call    sha256_init
         mov     edx,b
-        mov     esi,opad
+        mov     eax,[_tmpbuffer]
+        lea     esi,[eax+hmac_context.opad]
         call    sha256_update
         mov     edx,l
-        mov     esi,temporaryData
+        mov     esi,esp
+        add     esp,b
+; take answer from stack
         call    sha256_update
         popad
         call    sha256_final
         ret
+endp
 
-
-calculate_new_key:
+proc calculate_new_key _tmpbuffer
 ; input ebx = key, edx=key_length
-; output eax -> newKey with 64 length
+; _tmpbuffer should be at least 64(2*b) bytes!
         push    ebx
         push    edx
         cmp     edx,b
@@ -117,7 +131,8 @@ calculate_new_key:
 ; Key is smaller then or equal to key size,
 ; copy key to ipad
         mov     esi,ebx
-        mov     edi, ipad
+        mov     eax,[_tmpbuffer]
+        lea     edi,[eax+hmac_context.ipad]
         mov     ecx, edx
         rep     movsb
         mov     ecx, b
@@ -133,7 +148,8 @@ calculate_new_key:
         call    sha256_init
         mov     esi,ebx
         call    sha256_update
-        mov     edi,ipad
+        mov     eax, [_tmpbuffer]
+        lea     edi, [eax+hmac_context.ipad]
         call    sha256_final
 ; edi - answer, 32 bytes
         add     edi,l
@@ -142,13 +158,15 @@ calculate_new_key:
 .return:
 ; copy new key to second buffer!!
   ; copy generated key to second buffer
-        mov     esi, ipad
-        mov     edi, opad
+        mov     eax, [_tmpbuffer]
+        lea     esi, [eax+hmac_context.ipad]
+        lea     edi,[eax+hmac_context.opad]
         mov     ecx, b/4
         rep movsd
         pop     edx
         pop     ebx
         ret
+endp
 
 make_xor:
 ; input edi->firstoperand, edx=xorvalue
