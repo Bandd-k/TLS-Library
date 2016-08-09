@@ -35,12 +35,14 @@ include 'network.inc'
 ;include 'ssh_transport.inc'
 ;include 'dh_gex.inc'
 
-;include 'mpint.inc'
+include 'mpint.inc'
 include 'random.inc'
-;include 'aes256.inc'
-;include 'aes256-ctr.inc'
-;include 'aes256-cbc.inc'
-;include 'sha256.inc'
+include 'hmac.inc'
+include 'prf.inc'
+include 'aes256.inc'
+include 'aes256-ctr.inc'
+include 'aes256-cbc.inc'
+include 'sha256.inc'
 
 start:
 	mcall	68, 11	    ; Init heap
@@ -231,12 +233,19 @@ handshake:
     stosd
     call    MBRandom
     stosd
+    ;
+    mov     esi,clienthello+11
+    mov     ecx,32
+    stdcall add_to_buffer_master
+    ;
     mov     byte [clienthello+43], 0
     mov     byte [clienthello+44], 0
     mov     byte [clienthello+45], 2
     ; cipher suit!
     mov     byte [clienthello+46], 0x00
-    mov     byte [clienthello+47], 0x2f
+    ;0x2f-aes128
+    ;0x35-aes256
+    mov     byte [clienthello+47], 0x35
     mov     byte [clienthello+48], 1
     mov     byte [clienthello+49], 0
     mov     eax,50
@@ -244,9 +253,24 @@ handshake:
     mcall   send, [socketnum], clienthello, 50, 0
     cmp     eax, -1
     je	    socket_err
+
+    mov     esi,clienthello
+    mov     ecx,50
+    stdcall add_to_buffer
+
     mcall   recv, [socketnum], serverAnswer, 79, 0 ;always constant size except erorr, add handler!
     cmp     eax, -1
     je	    socket_err
+
+    mov     esi,serverAnswer
+    mov     ecx,79
+    stdcall add_to_buffer
+
+    ;add
+    mov     esi,serverAnswer+11
+    mov     ecx,32
+    stdcall add_to_buffer_master
+    ;
     ;check for version
     cmp     dword [serverAnswer],0x030316
     jne     serverhello_error
@@ -276,6 +300,11 @@ handshake:
     mcall   recv, [socketnum], serverAnswer, 9, 0
     cmp     eax, -1
     je	    socket_err
+
+    mov     esi,serverAnswer
+    mov     ecx,9
+    stdcall add_to_buffer
+
     mov     eax,dword[serverAnswer]
 
     cmp     byte [serverAnswer+5],0x0b
@@ -287,10 +316,17 @@ handshake:
     mov     ecx,eax
     push    ecx
     DEBUGF  1, "TLS: lengh of certificate %d\n",eax
+    push eax
     ;read certificate, site for reading der format http://www.lapo.it/asn1js/
     mcall   recv, [socketnum], serverAnswer, [eax], 0
     cmp     eax, -1
     je	    socket_err
+
+    pop eax
+    mov     esi,serverAnswer
+    mov     ecx,eax
+    stdcall add_to_buffer
+
     ; start looking for public key from serverAnswer+3
     mov     ebx,3
     pop     ecx
@@ -316,7 +352,7 @@ handshake:
     add     ebx,19
     .loop2:
     mov     eax,dword[serverAnswer+ebx]
-    mov     dword[RSApublicK+ecx],eax
+    mov     dword[RSApublicK+ecx+4],eax
     add     ecx,4
     add     ebx,4
     cmp     ecx,512
@@ -325,10 +361,101 @@ handshake:
     add     ebx,2
     mov     eax,dword[serverAnswer+ebx]
     shr     eax,8
-    mov     dword[exponent],eax
-    DEBUGF  1, "TLS: exponent %d\n",eax
-    mov     eax,dword[RSApublicK]
-    DEBUGF  1, "TLS: PublicKey was saved %x\n",eax
+    DEBUGF  1, "TLS: Exponent was saved \n"
+    mov     dword[exponent],4
+    mov     dword[exponent+4],65537
+    stdcall mpint_length, exponent
+    stdcall mpint_print, exponent
+    mov     eax,512
+    bswap   eax
+    mov     dword[RSApublicK],eax
+    DEBUGF  1, "TLS: PublicKey was saved \n"
+
+    mov esi,RSApublicK
+    mov edi,RSApublicK
+    call    mpint_to_little_endian
+    stdcall mpint_length, RSApublicK
+    stdcall mpint_print, RSApublicK
+
+
+    ;---------------TLS Client key Exchange Message--------------------
+    ; 16 03 03 02 06 10 00 02 02 02 00
+    ; ContentType (16), TLS version (03 03), Length 518 (02 06), Client key Exchange (10),Length 514 (00 02 02),Length 512 (02 00)
+    ; Ecnrypted Premaster Key next.
+
+
+    ;generate random Premaster key
+    mov     dword[premasterKey],48
+    mov     edi,premasterKey+4
+    call    MBRandom
+    stosd
+    call    MBRandom
+    stosd
+    call    MBRandom
+    stosd
+    call    MBRandom
+    stosd
+    call    MBRandom
+    stosd
+    call    MBRandom
+    stosd
+    call    MBRandom
+    stosd
+    call    MBRandom
+    stosd
+    call    MBRandom
+    stosd
+    call    MBRandom
+    stosd
+    call    MBRandom
+    stosd
+    call    MBRandom
+    stosd
+    
+    stdcall mpint_length, premasterKey
+    stdcall mpint_print, premasterKey
+
+    stdcall mpint_modexp, buffer_buffer, premasterKey, exponent, RSApublicK
+    DEBUGF  1, "Encrypted premasterKey\n"
+    stdcall mpint_length, buffer_buffer
+    stdcall mpint_print, buffer_buffer
+    mov     esi,buffer_buffer
+    mov     edi,clientKeyMessage+7
+    call    mpint_to_big_endian
+
+    mov dword[clientKeyMessage],0x02030316
+    mov dword[clientKeyMessage+4],0x02001006
+    mov word[clientKeyMessage+8],0x0202
+    mov byte[clientKeyMessage+10],0x00
+
+
+
+    mcall   send, [socketnum], clientKeyMessage, 523, 0
+    cmp     eax, -1
+    je	    socket_err
+
+    mov     esi,clientKeyMessage
+    mov     ecx,523
+    stdcall add_to_buffer
+
+
+    ;---------------Change cipher spec message --------------------------
+    ; 14 03 03 00 01 01
+    mov dword[clienthello], 0x00030314
+    mov word[clienthello+4],0x0101
+
+    mcall   send, [socketnum], clienthello, 6, 0
+    cmp     eax, -1
+    je	    socket_err
+
+
+    ;calculate Master key from premasterKey
+    mov ebx,premasterKey+4
+    mov edx,48
+    mov eax,master_seed
+    mov esi,[master_seed_size]
+    stdcall prf, master_str, master_str.length,masterKey
+
 
 
 
@@ -382,6 +509,15 @@ str11	db  10,'Remote host closed the connection.',10,10,0
 str12	db  'Server Hello error.',10,10,0
 str13	db  'certificate error.',10,10,0
 
+master_str: 
+	db 'master secret',0
+	.length = $ - master_str - 1
+
+finished_label: 
+	db 'client finished',0
+	.length = $ - master_str - 1
+
+
 sockaddr1:
     dw AF_INET4
   .port dw 0
@@ -391,6 +527,37 @@ sockaddr1:
 ciphersuites:
 	db  0x00, 0x2f	; TLS_RSA_WITH_AES_128_CBC_SHA          ; spec says we MUST support this one.
     .length = $ - ciphersuites
+
+
+
+
+;function which add handshake messages to buffer
+;input esi->message,ecx=size of message
+proc add_to_buffer
+	push ecx
+	mov edi,handshake_message_buffer
+	add edi,[handshake_buffer_size]
+	rep movsb
+	pop ecx
+	mov eax,[handshake_buffer_size]
+	add eax,ecx
+	mov [handshake_buffer_size],eax
+	ret
+endp
+
+;function which add data to prf buffer
+;input esi->message,ecx=size of message
+proc add_to_buffer_master
+	push ecx
+	mov edi,master_seed
+	add edi,[master_seed_size]
+	rep movsb
+	pop ecx
+	mov eax,[master_seed_size]
+	add eax,ecx
+	mov [master_seed_size],eax
+	ret
+endp
 
 
 ; import
@@ -429,9 +596,18 @@ clienthello rb 64
 sessionid   rb 32
 hostname    rb 1024
 serverAnswer rb 4048
-RSApublicK rb 512 ; p*q
+RSApublicK rb MPINT_MAX_LEN+4 ; p*q
 second	rb 10
-exponent rb 4 ; e
+exponent rb MPINT_MAX_LEN+4 ; e
+buffer_buffer rb MPINT_MAX_LEN+4 ;
+clientKeyMessage rb MPINT_MAX_LEN+4 ;
+premasterKey rb MPINT_MAX_LEN+4;
+mpint_tmp       rb MPINT_MAX_LEN+4
+handshake_message_buffer rb 4048
+handshake_buffer_size dd 0
+master_seed rb 4048
+master_seed_size dd 0
+masterKey rb l*3
 
 
 mem:

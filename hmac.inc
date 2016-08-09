@@ -36,6 +36,8 @@
 ;     stdcall   dump_256bit_hex, answer
 ;     ret
 
+
+
 b = 64 ; block_size
 l = 32 ; output length for SHA256
 
