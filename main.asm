@@ -349,9 +349,11 @@ handshake:
     jne     certificate_error
     ; pubK start from ebx+15, some hardcode! check it later! 4096 bit hardcode too.
     mov     ecx,0
-    add     ebx,19
+    add     ebx,20
+    ;plus 1, first 00 doesn't matter
     .loop2:
     mov     eax,dword[serverAnswer+ebx]
+    bswap   eax
     mov     dword[RSApublicK+ecx+4],eax
     add     ecx,4
     add     ebx,4
@@ -361,21 +363,32 @@ handshake:
     add     ebx,2
     mov     eax,dword[serverAnswer+ebx]
     shr     eax,8
-    DEBUGF  1, "TLS: Exponent was saved \n"
+
+    ;--------------------- Jeffrey -------------------------------;
+    ;------------------Look here please --------------------------;
+
+    DEBUGF  1, "TLS: Start calculating!!!\n"
+    ; Exponent for Modexp! Small-Endian
+    DEBUGF  1, "TLS: Exponent: \n"
     mov     dword[exponent],4
     mov     dword[exponent+4],65537
     stdcall mpint_length, exponent
     stdcall mpint_print, exponent
+
+
+    ; Modulus for Modexp! Big-Endian
     mov     eax,512
     bswap   eax
     mov     dword[RSApublicK],eax
-    DEBUGF  1, "TLS: PublicKey was saved \n"
+    DEBUGF  1, "TLS: PublicKey mod: \n"
+    stdcall  print_number512bytes, RSApublicK+4
 
+    ; Convert Modulus to Small-Endian
     mov esi,RSApublicK
     mov edi,RSApublicK
     call    mpint_to_little_endian
     stdcall mpint_length, RSApublicK
-    stdcall mpint_print, RSApublicK
+    ;stdcall mpint_print, RSApublicK
 
 
     ;---------------TLS Client key Exchange Message--------------------
@@ -384,7 +397,7 @@ handshake:
     ; Ecnrypted Premaster Key next.
 
 
-    ;generate random Premaster key
+    ;generate random Premaster key In Small-Endian
     mov     dword[premasterKey],48
     mov     edi,premasterKey+4
     call    MBRandom
@@ -413,15 +426,23 @@ handshake:
     stosd
     
     stdcall mpint_length, premasterKey
-    stdcall mpint_print, premasterKey
+    ;stdcall mpint_print, premasterKey
 
+    ; Calculate Modexp in Small-Endian
     stdcall mpint_modexp, buffer_buffer, premasterKey, exponent, RSApublicK
-    DEBUGF  1, "Encrypted premasterKey\n"
     stdcall mpint_length, buffer_buffer
-    stdcall mpint_print, buffer_buffer
+
+    ;stdcall mpint_print, buffer_buffer
+
+    ; Convet Small-Endian Encrypted premasterKey to Big-Endian
     mov     esi,buffer_buffer
     mov     edi,clientKeyMessage+7
     call    mpint_to_big_endian
+
+
+    DEBUGF  1, "Encrypted premasterKey\n"
+    stdcall  print_number512bytes, clientKeyMessage+11
+
 
     mov dword[clientKeyMessage],0x02030316
     mov dword[clientKeyMessage+4],0x02001006
@@ -449,12 +470,31 @@ handshake:
     je	    socket_err
 
 
-    ;calculate Master key from premasterKey
-    mov ebx,premasterKey+4
-    mov edx,48
-    mov eax,master_seed
-    mov esi,[master_seed_size]
-    stdcall prf, master_str, master_str.length,masterKey
+    ;Convert Premaster to Big-Endian
+    mov     esi,premasterKey
+    mov     edi,buffer_buffer
+    call    mpint_to_big_endian
+
+
+    ; buffer_buffer contains premastermaster key in big endian!
+    mov eax,dword[buffer_buffer+4]
+    DEBUGF  1, "TLS: Premaster:\n"
+    stdcall print_number48bytes, buffer_buffer+4
+
+
+    ;
+    ;DEBUGF  1, "Client Random\n"
+    ;stdcall dump_256bit_hex, master_seed
+
+    ;DEBUGF  1, "Server Random\n"
+    ;stdcall dump_256bit_hex, master_seed+32
+
+    ;mov ebx,buffer_buffer+4
+    ;mov edx,48
+    ;mov eax,master_seed
+    ;mov esi,[master_seed_size]
+
+    ;stdcall prf, master_str, master_str.length,masterKey
 
 
 
@@ -557,6 +597,32 @@ proc add_to_buffer_master
 	add eax,ecx
 	mov [master_seed_size],eax
 	ret
+endp
+
+proc print_number48bytes _ptr
+        pushad
+        mov     esi, [_ptr]
+        mov     ecx, 12
+.next_dword:
+        lodsd
+        DEBUGF  1,'%x',eax
+        loop    .next_dword
+        DEBUGF  1,'\n'
+        popad
+        ret
+endp
+
+proc print_number512bytes _ptr
+        pushad
+        mov     esi, [_ptr]
+        mov     ecx, 128
+.next_dword:
+        lodsd
+        DEBUGF  1,'%x',eax
+        loop    .next_dword
+        DEBUGF  1,'\n'
+        popad
+        ret
 endp
 
 

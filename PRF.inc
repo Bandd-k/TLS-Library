@@ -51,7 +51,6 @@ proc prf _label, label_size, _output
 
 
         pop     edi
-        DEBUGF  1,'size %d\n',edi
         pop     eax
         stdcall    hmac_add, tmp_buffer
         mov     edi,A_1
@@ -69,7 +68,6 @@ proc prf _label, label_size, _output
         mov     edi,A_3
         stdcall    hmac_final, tmp_buffer
 ; A_3 was calculated
-        DEBUGF  1,'As calculated\n'
         mov     eax,A_1
         mov     edi,l
         stdcall    hmac_hash, tmp_buffer
@@ -117,8 +115,8 @@ proc prf _label, label_size, _output
         mov     edi,[_output]
         add     edi,2*l
         stdcall    hmac_final, tmp_buffer
-        DEBUGF  1,'PRF:\n'
-        stdcall dump_512bit_hex, [_output]
+        ;DEBUGF  1,'PRF:\n'
+        ;stdcall dump_512bit_hex, [_output]
         ret
 endp
         ; prf_output= HMAC_hash(secret, A(1) + seed)+HMAC_hash(secret, A(2) + seed)+HMAC_hash(secret, A(3) + seed)
