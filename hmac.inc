@@ -64,7 +64,7 @@ proc hmac_setkey _tmpbuffer
         lea     edi,[eax+hmac_context.opad]
         mov     edx,0x5c5c5c5c
         call    make_xor
-        stdcall dump_512bit_hex, edi
+        ;stdcall dump_512bit_hex, edi
         popad
         ret
 endp

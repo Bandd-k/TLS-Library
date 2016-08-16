@@ -353,7 +353,6 @@ handshake:
     ;plus 1, first 00 doesn't matter
     .loop2:
     mov     eax,dword[serverAnswer+ebx]
-    bswap   eax
     mov     dword[RSApublicK+ecx+4],eax
     add     ecx,4
     add     ebx,4
@@ -381,15 +380,12 @@ handshake:
     bswap   eax
     mov     dword[RSApublicK],eax
     DEBUGF  1, "TLS: PublicKey mod: \n"
-    stdcall  print_number512bytes, RSApublicK+4
-
     ; Convert Modulus to Small-Endian
     mov esi,RSApublicK
-    mov edi,RSApublicK
+    mov edi,RSA_Modulus
     call    mpint_to_little_endian
-    stdcall mpint_length, RSApublicK
-    ;stdcall mpint_print, RSApublicK
-
+    stdcall mpint_length,RSA_Modulus
+    stdcall mpint_print, RSA_Modulus
 
     ;---------------TLS Client key Exchange Message--------------------
     ; 16 03 03 02 06 10 00 02 02 02 00
@@ -398,7 +394,7 @@ handshake:
 
 
     ;generate random Premaster key In Small-Endian
-    mov     dword[premasterKey],48
+    mov     dword[premasterKey],52
     mov     edi,premasterKey+4
     call    MBRandom
     stosd
@@ -424,24 +420,28 @@ handshake:
     stosd
     call    MBRandom
     stosd
+    ; one more like padding
+    call    MBRandom
+    stosd
+    mov     byte[premasterKey+50],0x03
+    mov     byte[premasterKey+51],0x03
+    mov     byte[premasterKey+52],0x00
     
     stdcall mpint_length, premasterKey
-    ;stdcall mpint_print, premasterKey
+    stdcall mpint_print, premasterKey
 
     ; Calculate Modexp in Small-Endian
-    stdcall mpint_modexp, buffer_buffer, premasterKey, exponent, RSApublicK
+    stdcall mpint_modexp, buffer_buffer, premasterKey, exponent, RSA_Modulus
     stdcall mpint_length, buffer_buffer
 
-    ;stdcall mpint_print, buffer_buffer
+    ;
+    DEBUGF  1, "Encrypted premasterKey\n"
+    stdcall mpint_print, buffer_buffer
 
     ; Convet Small-Endian Encrypted premasterKey to Big-Endian
     mov     esi,buffer_buffer
     mov     edi,clientKeyMessage+7
     call    mpint_to_big_endian
-
-
-    DEBUGF  1, "Encrypted premasterKey\n"
-    stdcall  print_number512bytes, clientKeyMessage+11
 
 
     mov dword[clientKeyMessage],0x02030316
@@ -476,25 +476,24 @@ handshake:
     call    mpint_to_big_endian
 
 
-    ; buffer_buffer contains premastermaster key in big endian!
-    mov eax,dword[buffer_buffer+4]
-    DEBUGF  1, "TLS: Premaster:\n"
-    stdcall print_number48bytes, buffer_buffer+4
 
 
     ;
-    ;DEBUGF  1, "Client Random\n"
-    ;stdcall dump_256bit_hex, master_seed
+    DEBUGF  1, "Client Random\n"
+    stdcall dump_256bit_hex, master_seed
 
-    ;DEBUGF  1, "Server Random\n"
-    ;stdcall dump_256bit_hex, master_seed+32
+    DEBUGF  1, "Server Random\n"
+    stdcall dump_256bit_hex, master_seed+32
 
-    ;mov ebx,buffer_buffer+4
-    ;mov edx,48
-    ;mov eax,master_seed
-    ;mov esi,[master_seed_size]
-
-    ;stdcall prf, master_str, master_str.length,masterKey
+    mov ebx,buffer_buffer+8
+    DEBUGF  1, "premaster\n"
+    stdcall print_number48bytes,buffer_buffer+8
+    mov edx,48
+    mov eax,master_seed
+    mov esi,64
+    stdcall prf, master_str, master_str.length,masterKey
+    DEBUGF  1, "MasterKey:\n"
+    stdcall dump_256bit_hex, masterKey
 
 
 
@@ -555,7 +554,7 @@ master_str:
 
 finished_label: 
 	db 'client finished',0
-	.length = $ - master_str - 1
+	.length = $ - finished_label - 1
 
 
 sockaddr1:
@@ -605,6 +604,7 @@ proc print_number48bytes _ptr
         mov     ecx, 12
 .next_dword:
         lodsd
+        bswap eax
         DEBUGF  1,'%x',eax
         loop    .next_dword
         DEBUGF  1,'\n'
@@ -618,6 +618,7 @@ proc print_number512bytes _ptr
         mov     ecx, 128
 .next_dword:
         lodsd
+        bswap eax
         DEBUGF  1,'%x',eax
         loop    .next_dword
         DEBUGF  1,'\n'
@@ -663,6 +664,7 @@ sessionid   rb 32
 hostname    rb 1024
 serverAnswer rb 4048
 RSApublicK rb MPINT_MAX_LEN+4 ; p*q
+RSA_Modulus rb MPINT_MAX_LEN+4
 second	rb 10
 exponent rb MPINT_MAX_LEN+4 ; e
 buffer_buffer rb MPINT_MAX_LEN+4 ;
