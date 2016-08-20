@@ -19,25 +19,89 @@
 
 
 ;input data,size of data
-
+bufferptr       rb 4096
+msg             rb 4096
 proc tls_send sock, buf, size, flags
-locals
-        bufferptr       rb 4096
-endl
 ; copy iv to start of message
+    mov dword[bufferptr],0x00030316
+    mov byte[bufferptr+4],0x50
 	mov     esi, iv
-    mov     edi, bufferptr
+    mov     edi, bufferptr+5
     mov     ecx, 16/4
     rep movsd
+    ;need to calculate MAC of buf
+    ; Message authentication for FinishedMessage
+    ;length 
+    ;IT SHOULD BE OK
+    mov dword[msg],0
+    mov dword[msg+4],0
+    ;type
+    mov byte[msg+8],0x16
+    ;version
+    mov word[msg+9],0x0303
+    ;length of message
+    mov byte[msg+11],0x00
+    mov byte[msg+12],0x10
+    ;+info
+
+    mov ebx,session_keys.client_mac
+    mov edx,32
+    stdcall    hmac_setkey, tmp_buffer
+
+    mov eax,msg
+    mov edi,13
+    stdcall hmac_hash,tmp_buffer
+
+    mov eax,[buf]
+    mov edi,16
+    stdcall hmac_add, tmp_buffer
+
+    mov edi,[buf]
+    add edi,16
+    push edi
+    stdcall hmac_final, tmp_buffer
+    ;mac added
+
+    pop edi
+    add edi,32
+    mov dword[edi],0x0f0f0f0f
+    add edi,4
+    mov dword[edi],0x0f0f0f0f
+    add edi,4
+    mov dword[edi],0x0f0f0f0f
+    add edi,4
+    mov dword[edi],0x0f0f0f0f
+    ;padding
 
     stdcall aes256_cbc_init, iv
     ; returns context, save it to ebx
     mov     ebx, eax
-    stdcall aes256_set_encrypt_key, ebx, key
+    stdcall aes256_set_encrypt_key, ebx, session_keys.client_enc
+    DEBUGF 1,'CLient_enc Key\n'
+    stdcall print_numberNbytes,session_keys.client_enc,8
 
-    ; Message authentication
+    mov edi,bufferptr+21
+    mov esi,[buf]
+    DEBUGF 1,'ToEncrypt\n'
+    stdcall print_numberNbytes,[buf],16
+    mov ecx,4
+    @@:
+        push    ecx
+        stdcall aes256_cbc_encrypt, ebx, esi, edi
+        pop     ecx
+        add     esi, 16
+        add     edi, 16
+        loop    @r
 
-
+    ;to send
+    DEBUGF 1,'ToSend\n'
+    stdcall print_numberNbytes,bufferptr,22
+    
+    DEBUGF 1,'Encrypted Succesful\n'
+    mcall   send, [socketnum], bufferptr, 85, 0
+    cmp     eax, -1
+    je      socket_err
+    ret
 
 
 endp
@@ -50,11 +114,12 @@ proc tls_recieve sock, buf, size, flags
     stdcall aes256_set_encrypt_key, ebx, key
 
 
-
+    ret
 endp
 
+
 mac_buffer rb 2*b
-proc mac, content,
+proc mac, content
     mov ebx, key
     mov edx, 32
     stdcall    hmac_setkey, mac_buffer
@@ -63,14 +128,11 @@ proc mac, content,
     mov edi,[label_size]
     stdcall hmac_hash,tmp_buffer
 
-
-
-
-
+    ret
 endp
 
 
-version db 0x0303; tls 1.2 version
+version db 0x03,0x03; tls 1.2 version
 type db 0x14 ; FInishedMessage
 
 

@@ -34,6 +34,7 @@ include 'network.inc'
 ;include 'mcodes.inc'
 ;include 'ssh_transport.inc'
 ;include 'dh_gex.inc'
+include 'transferdata.inc'
 
 include 'mpint.inc'
 include 'random.inc'
@@ -245,7 +246,8 @@ handshake:
     mov     byte [clienthello+46], 0x00
     ;0x2f-aes128
     ;0x35-aes256
-    mov     byte [clienthello+47], 0x35
+    ;0x3D-aes256sha256
+    mov     byte [clienthello+47], 0x3D
     mov     byte [clienthello+48], 1
     mov     byte [clienthello+49], 0
     mov     eax,50
@@ -254,16 +256,17 @@ handshake:
     cmp     eax, -1
     je	    socket_err
 
-    mov     esi,clienthello
-    mov     ecx,50
+
+    mov     esi,clienthello+5
+    mov     ecx,45
     stdcall add_to_buffer
 
-    mcall   recv, [socketnum], serverAnswer, 79, 0 ;always constant size except erorr, add handler!
+    mcall   recv, [socketnum], serverAnswer, 79, 0 ;always constant size except error, add handler!
     cmp     eax, -1
     je	    socket_err
 
-    mov     esi,serverAnswer
-    mov     ecx,79
+    mov     esi,serverAnswer+5
+    mov     ecx,74
     stdcall add_to_buffer
 
     ;add
@@ -301,8 +304,8 @@ handshake:
     cmp     eax, -1
     je	    socket_err
 
-    mov     esi,serverAnswer
-    mov     ecx,9
+    mov     esi,serverAnswer+5
+    mov     ecx,4
     stdcall add_to_buffer
 
     mov     eax,dword[serverAnswer]
@@ -317,15 +320,30 @@ handshake:
     push    ecx
     DEBUGF  1, "TLS: lengh of certificate %d\n",eax
     push eax
+    add eax,9;to   recieve serverhello done
     ;read certificate, site for reading der format http://www.lapo.it/asn1js/
     mcall   recv, [socketnum], serverAnswer, [eax], 0
     cmp     eax, -1
     je	    socket_err
 
     pop eax
+    ;add certificate message to buffer
     mov     esi,serverAnswer
     mov     ecx,eax
     stdcall add_to_buffer
+    
+    ;check hello done
+    add eax,5
+    cmp dword[serverAnswer+eax],0x0000000e
+    jne serverhello_error
+
+
+    ;add hello done to buffer
+    mov esi,serverAnswer
+    add esi,eax
+    mov     ecx,4
+    stdcall add_to_buffer
+
 
     ; start looking for public key from serverAnswer+3
     mov     ebx,3
@@ -351,6 +369,9 @@ handshake:
     mov     ecx,0
     add     ebx,20
     ;plus 1, first 00 doesn't matter
+
+    ; TODO delete this copying
+
     .loop2:
     mov     eax,dword[serverAnswer+ebx]
     mov     dword[RSApublicK+ecx+4],eax
@@ -363,11 +384,29 @@ handshake:
     mov     eax,dword[serverAnswer+ebx]
     shr     eax,8
 
+
+
+    ;serverhello_done recieve always 9
+    ;DEBUGF  1, "TLS: Reciening server hello!!!\n"
+    ;mcall   recv, [socketnum], clienthello, 5, 0
+    ;cmp     eax, -1
+    ;je	    socket_err
+    ;check
+    ;cmp dword[clienthello+5],0x0000000e
+    ;jne serverhello_error
+
+    ;mov     esi,clienthello+5
+    ;mov     ecx,4
+    ;stdcall add_to_buffer
+
     ;--------------------- Jeffrey -------------------------------;
     ;------------------Look here please --------------------------;
 
     DEBUGF  1, "TLS: Start calculating!!!\n"
     ; Exponent for Modexp! Small-Endian
+
+    ; TODO exponent from certificate
+
     DEBUGF  1, "TLS: Exponent: \n"
     mov     dword[exponent],4
     mov     dword[exponent+4],65537
@@ -384,7 +423,6 @@ handshake:
     mov esi,RSApublicK
     mov edi,RSA_Modulus
     call    mpint_to_little_endian
-    stdcall mpint_length,RSA_Modulus
     stdcall mpint_print, RSA_Modulus
 
     ;---------------TLS Client key Exchange Message--------------------
@@ -455,8 +493,8 @@ handshake:
     cmp     eax, -1
     je	    socket_err
 
-    mov     esi,clientKeyMessage
-    mov     ecx,523
+    mov     esi,clientKeyMessage+5
+    mov     ecx,518
     stdcall add_to_buffer
 
 
@@ -480,26 +518,183 @@ handshake:
 
     ;
     DEBUGF  1, "Client Random\n"
-    stdcall dump_256bit_hex, master_seed
+    stdcall dump_256bit_hex, randoms_buffer
 
     DEBUGF  1, "Server Random\n"
-    stdcall dump_256bit_hex, master_seed+32
+    stdcall dump_256bit_hex, randoms_buffer+32
 
+
+    ;remove later!!! delete zero
+
+    cmp byte[buffer_buffer+8],0x00
+    je .a
     mov ebx,buffer_buffer+8
+    jmp .b
+    .a:
+    mov  ebx,buffer_buffer+9
+    .b:
+
+
+
     DEBUGF  1, "premaster\n"
     stdcall print_number48bytes,buffer_buffer+8
     mov edx,48
-    mov eax,master_seed
+    mov eax,randoms_buffer
     mov esi,64
     stdcall prf, master_str, master_str.length,masterKey
     DEBUGF  1, "MasterKey:\n"
+    ; Sometimes appears bugs!
     stdcall dump_256bit_hex, masterKey
 
 
+    ; change random places
+    mov     esi, randoms_buffer
+    mov     edi, randoms_buffer+64
+    mov     ecx, 32/4
+    rep movsd
+
+    ; calculate keys
+    mov ebx,masterKey
+    mov edx,48
+    mov eax,randoms_buffer+32
+    mov esi,64
+    stdcall prf, keyExpansion_label, keyExpansion_label.length,session_keys
+    DEBUGF	1, "TLS:Session Keys Were Saved\n"
+
+
+; finished message = PRF(master_secret, finished_label, Hash(handshake_messages))[0..verify_data_length-1];
+; Hash(handshake_messages) = SHA256(handshake_messages)
+; SHA256(handshake_messages) = SHA256(handshake_message_buffer)
+
+    call    sha256_init
+    mov     esi,handshake_message_buffer
+    mov     edx,dword[handshake_buffer_size]
+    call    sha256_update
+    mov     edi,buffer_buffer
+    call    sha256_final
+    DEBUGF	1, "TLS: Hash of Messages calculated\n"
+    ; l(32) bytes in buffer_buffer are my SHA256(handshake_message_buffer)
+
+
+    ;finished message header 16 03 03 00 40
+    mov dword[serverAnswer],0x00030316
+    mov byte[serverAnswer+4],0x50
+
+    ;14 00 00 0C first bytes in encrypt part
+
+    mov dword[exponent],0x0c000014
+    ; calculate verify data
+    mov ebx,masterKey
+    mov edx,48
+    mov eax, buffer_buffer
+    mov esi,l
+    stdcall prf, finished_label, finished_label.length,exponent+4
+    DEBUGF	1, "TLS: Verify Data calculated\n"
+    ;now exponent has 4hdr+ 12 bytes verify data
+    ;stdcall tls_send,[socketnum], exponent, 16,0
+
+
+    ;send Finished message---------------------------------------------
+    mov dword[bufferptr],0x00030316
+    mov byte[bufferptr+4],0x50
+	mov     esi, iv
+    mov     edi, bufferptr+5
+    mov     ecx, 16/4
+    rep movsd
+    ;need to calculate MAC of buf
+    ; Message authentication for FinishedMessage
+    ;length 
+    ;IT SHOULD BE OK
+    mov dword[msg],0
+    mov dword[msg+4],0
+    ;type
+    mov byte[msg+8],0x16
+    ;version
+    mov word[msg+9],0x0303
+    ;length of message
+    mov byte[msg+11],0x00
+    mov byte[msg+12],0x10
+    ;+info
+
+    mov ebx,session_keys.client_mac
+    mov edx,32
+    stdcall    hmac_setkey, tmp_buffer
+
+    mov eax,msg
+    mov edi,13
+    stdcall hmac_hash,tmp_buffer
+
+    mov eax,exponent
+    mov edi,16
+    stdcall hmac_add, tmp_buffer
+
+    mov edi,exponent
+    add edi,16
+    push edi
+    stdcall hmac_final, tmp_buffer
+    ;mac added
+
+    pop edi
+    add edi,32
+    mov dword[edi],0x0f0f0f0f
+    add edi,4
+    mov dword[edi],0x0f0f0f0f
+    add edi,4
+    mov dword[edi],0x0f0f0f0f
+    add edi,4
+    mov dword[edi],0x0f0f0f0f
+    ;padding
+
+    stdcall aes256_cbc_init, iv
+    ; returns context, save it to ebx
+    mov     ebx, eax
+    stdcall aes256_set_encrypt_key, ebx, session_keys.client_enc
+    DEBUGF 1,'CLient_enc Key\n'
+    stdcall print_numberNbytes,session_keys.client_enc,8
+
+    mov edi,bufferptr+21
+    mov esi,exponent
+    DEBUGF 1,'ToEncrypt\n'
+    stdcall print_numberNbytes,exponent,16
+    mov ecx,4
+    @@:
+        push    ecx
+        stdcall aes256_cbc_encrypt, ebx, esi, edi
+        pop     ecx
+        add     esi, 16
+        add     edi, 16
+        loop    @r
+
+    ;to send
+    DEBUGF 1,'ToSend\n'
+    stdcall print_numberNbytes,bufferptr,22
+    
+    DEBUGF 1,'Encrypted Succesful\n'
+    mcall   send, [socketnum], bufferptr, 85, 0
+    cmp     eax, -1
+    je      socket_err
 
 
 
 
+    ;-------------------------------------------------------------------
+    ; Recieve Сhange cipher message
+    mcall   recv, [socketnum], clienthello, 6, 0
+    cmp     eax, -1
+    je	    socket_err
+    cmp byte[clienthello],0x14
+    jne socket_err; change error
+
+    ;-------------------------------------------------------------------
+
+    ; Recieve Finished message from server
+    mcall   recv, [socketnum], buffer_buffer, 85, 0
+    cmp     eax, -1
+    je	    socket_err
+
+    ;TODO check FInished message from Server
+
+    ;-------------------------------------------------------------------
 
 
 
@@ -556,12 +751,25 @@ finished_label:
 	db 'client finished',0
 	.length = $ - finished_label - 1
 
+keyExpansion_label: 
+	db 'key expansion',0
+	.length = $ - keyExpansion_label - 1
+
+
+
 
 sockaddr1:
     dw AF_INET4
   .port dw 0
   .ip	dd 0
     rb 10
+
+;2 x 32 byte keys and 2 x 32 bytes MAC keys
+session_keys:
+	.client_mac rb 32
+	.server_mac rb 32
+	.client_enc rb 32
+	.server_enc rb 32
 
 ciphersuites:
 	db  0x00, 0x2f	; TLS_RSA_WITH_AES_128_CBC_SHA          ; spec says we MUST support this one.
@@ -573,6 +781,7 @@ ciphersuites:
 ;function which add handshake messages to buffer
 ;input esi->message,ecx=size of message
 proc add_to_buffer
+	push eax
 	push ecx
 	mov edi,handshake_message_buffer
 	add edi,[handshake_buffer_size]
@@ -581,6 +790,7 @@ proc add_to_buffer
 	mov eax,[handshake_buffer_size]
 	add eax,ecx
 	mov [handshake_buffer_size],eax
+	pop eax
 	ret
 endp
 
@@ -588,13 +798,13 @@ endp
 ;input esi->message,ecx=size of message
 proc add_to_buffer_master
 	push ecx
-	mov edi,master_seed
-	add edi,[master_seed_size]
+	mov edi,randoms_buffer
+	add edi,[randoms_buffer_size]
 	rep movsb
 	pop ecx
-	mov eax,[master_seed_size]
+	mov eax,[randoms_buffer_size]
 	add eax,ecx
-	mov [master_seed_size],eax
+	mov [randoms_buffer_size],eax
 	ret
 endp
 
@@ -602,6 +812,19 @@ proc print_number48bytes _ptr
         pushad
         mov     esi, [_ptr]
         mov     ecx, 12
+.next_dword:
+        lodsd
+        bswap eax
+        DEBUGF  1,'%x',eax
+        loop    .next_dword
+        DEBUGF  1,'\n'
+        popad
+        ret
+endp
+proc print_numberNbytes _ptr,n
+        pushad
+        mov     esi, [_ptr]
+        mov     ecx, [n]
 .next_dword:
         lodsd
         bswap eax
@@ -673,9 +896,9 @@ premasterKey rb MPINT_MAX_LEN+4;
 mpint_tmp       rb MPINT_MAX_LEN+4
 handshake_message_buffer rb 4048
 handshake_buffer_size dd 0
-master_seed rb 4048
-master_seed_size dd 0
-masterKey rb l*3
+randoms_buffer rb 4048
+randoms_buffer_size dd 0
+masterKey rb l*4
 
 
 mem:

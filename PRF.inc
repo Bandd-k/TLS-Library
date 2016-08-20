@@ -30,7 +30,8 @@
 A_1     rb      l
 A_2     rb      l
 A_3     rb      l
-;prf_output      rb l*3
+A_4     rb      l
+;prf_output      rb l*4
 tmp_buffer      rb 2*b
 ; input ebx->secret,edx=secret_length, eax->seed, esi=seed_length
 proc prf _label, label_size, _output
@@ -41,6 +42,8 @@ proc prf _label, label_size, _output
         push    eax
         push    esi
 
+        push    eax
+        push    esi
         push    eax
         push    esi
         stdcall    hmac_setkey, tmp_buffer
@@ -70,6 +73,15 @@ proc prf _label, label_size, _output
         mov     edi,A_3
         stdcall    hmac_final, tmp_buffer
 ; A_3 was calculated
+        mov     eax,A_3
+        mov     edi,l
+        stdcall    hmac_hash, tmp_buffer
+        mov     edi,A_4
+        stdcall    hmac_final, tmp_buffer
+; A_4 was calculated
+
+
+
         mov     eax,A_1
         mov     edi,l
         stdcall    hmac_hash, tmp_buffer
@@ -117,9 +129,25 @@ proc prf _label, label_size, _output
         mov     edi,[_output]
         add     edi,2*l
         stdcall    hmac_final, tmp_buffer
+;prf_output= HMAC_hash(secret, A(1) + seed)+HMAC_hash(secret, A(2) + seed)+HMAC_hash(secret, A(3) + seed)
+        mov     eax,A_4
+        mov     edi,l
+        stdcall    hmac_hash, tmp_buffer
+
+        ;label_addition
+        mov eax,[_label]
+        mov edi,[label_size]
+        stdcall hmac_add,tmp_buffer
+
+        pop     edi
+        pop     eax
+        stdcall    hmac_add, tmp_buffer
+        mov     edi,[_output]
+        add     edi,3*l
+        stdcall    hmac_final, tmp_buffer
         ;DEBUGF  1,'PRF:\n'
         ;stdcall dump_512bit_hex, [_output]
         ret
 endp
-        ; prf_output= HMAC_hash(secret, A(1) + seed)+HMAC_hash(secret, A(2) + seed)+HMAC_hash(secret, A(3) + seed)
-        ; prf should be 80, so we discard last 16 bytes
+        ; prf_output= HMAC_hash(secret, A(1) + seed)+HMAC_hash(secret, A(2) + seed)+HMAC_hash(secret, A(3) + seed)+HMAC_hash(secret, A(4) + seed)
+        ;128 bytes!!
