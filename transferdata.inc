@@ -106,14 +106,39 @@ proc tls_send sock, buf, size, flags
 
 endp
 
-
+;TODO rewrite SIZE should be decrypted info without IV and such stuff
+;TODO INPUT not socket! TLS Structure
 proc tls_recieve sock, buf, size, flags
-    stdcall aes256_cbc_init, iv
+
+    mcall   recv, [socketnum], bufferptr, [size], 0
+    cmp     eax, -1
+    je      socket_err
+
+
+    ;IV at bufferptr +5 (5 bytes header)
+    stdcall aes256_cbc_init, bufferptr+5
     ; returns context, save it to ebx
     mov     ebx, eax
-    stdcall aes256_set_encrypt_key, ebx, key
+    mov eax,[size]
+    ;size minus header
+    sub eax,5
+    ; minus IV size
+    sub eax,16
+    mov esi,bufferptr+21
+    mov edi,[buf]
+    push eax
+    stdcall aes256_set_decrypt_key, ebx, session_keys.server_enc
+    pop ecx
 
-
+    @@:
+    push    ecx
+        stdcall aes256_cbc_decrypt, ebx, esi, edi
+        pop     ecx
+        add     esi, 16
+        add     edi, 16
+        sub     ecx,16
+    cmp ecx,0
+    jne    @r
     ret
 endp
 

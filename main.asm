@@ -10,18 +10,17 @@ __DEBUG_LEVEL__ = 1
 BUFFERSIZE  = 4096
 MAX_BITS    = 8192
 
-DH_PRIVATE_KEY_SIZE = 256
 
 use32
 
-    db	'MENUET01'  ; signature
-    dd	1	; header version
-    dd	start	    ; entry point
-    dd	i_end	    ; initialized size
-    dd	mem+4096    ; required memory
-    dd	mem+4096    ; stack pointer
-    dd	hostname    ; parameters
-    dd	0	; path
+    db  'MENUET01'  ; signature
+    dd  1   ; header version
+    dd  start       ; entry point
+    dd  i_end       ; initialized size
+    dd  mem+4096    ; required memory
+    dd  mem+4096    ; stack pointer
+    dd  hostname    ; parameters
+    dd  0   ; path
 
 include 'macros.inc'
 purge mov,add,sub
@@ -29,11 +28,6 @@ include 'proc32.inc'
 include 'dll.inc'
 include 'debug-fdo.inc'
 include 'network.inc'
-;include 'libcrash.inc'
-
-;include 'mcodes.inc'
-;include 'ssh_transport.inc'
-;include 'dh_gex.inc'
 include 'transferdata.inc'
 
 include 'mpint.inc'
@@ -46,29 +40,29 @@ include 'aes256-cbc.inc'
 include 'sha256.inc'
 
 start:
-	mcall	68, 11	    ; Init heap
-	DEBUGF	1, "TLS: Loading libraries\n"
-	stdcall dll.Load, @IMPORT
-	test	eax, eax
-	jnz exit
+    mcall   68, 11      ; Init heap
+    DEBUGF  1, "TLS: Loading libraries\n"
+    stdcall dll.Load, @IMPORT
+    test    eax, eax
+    jnz exit
 
-	DEBUGF	1, "TLS: Init PRNG\n"
+    DEBUGF  1, "TLS: Init PRNG\n"
     call    init_random
 
-	DEBUGF	1, "TLS: Init Console\n"
-	invoke	con_start, 1
-	invoke	con_init, 80, 25, 80, 25, title
+    DEBUGF  1, "TLS: Init Console\n"
+    invoke  con_start, 1
+    invoke  con_init, 80, 25, 80, 25, title
 
 ; Check for parameters
 ;       cmp     byte[hostname], 0
 ;       jne     resolve
 
 main:
-	invoke	con_cls
+    invoke  con_cls
 ; Welcome user
-	invoke	con_write_asciiz, str1
+    invoke  con_write_asciiz, str1
 
-prompt:
+ prompt:
 ; write prompt
     invoke  con_write_asciiz, str2
 ; read string
@@ -76,9 +70,9 @@ prompt:
     invoke  con_gets, esi, 256
 ; check for exit
     test    eax, eax
-    jz	exit
+    jz  exit
     cmp byte[esi], 10
-    jz	exit
+    jz  exit
 
 resolve:
     mov [sockaddr1.port], 22 shl 8
@@ -88,9 +82,9 @@ resolve:
   @@:
     lodsb
     cmp al, ':'
-    je	.do_port
+    je  .do_port
     cmp al, 0x20
-    ja	@r
+    ja  @r
     mov byte[esi-1], 0
     jmp .done
 
@@ -103,9 +97,9 @@ resolve:
     cmp al, 0x20
     jbe .port_done
     sub al, '0'
-    jb	hostname_error
+    jb  hostname_error
     cmp al, 9
-    ja	hostname_error
+    ja  hostname_error
     lea ebx, [ebx*4 + ebx]
     shl ebx, 1
     add ebx, eax
@@ -151,7 +145,7 @@ resolve:
 ; Create socket
     mcall   socket, AF_INET4, SOCK_STREAM, 0
     cmp eax, -1
-    jz	socket_err
+    jz  socket_err
     mov [socketnum], eax
 
 ; Connect
@@ -204,11 +198,11 @@ handshake:
 ;-----------------------------------------------------
     DEBUGF  1, "TLS: Handshake process starting\n"
     mov     dword [clienthello], 0x030316 ; protocol version, plus 0x16 (22) handshake (RFC says 3, 1 or 3,0 for record-layer clienthello)
-    mov eax,43+ciphersuites.length
+    mov     eax,43+ciphersuites.length
     mov     byte [clienthello+3], ah
     mov     byte [clienthello+4], al
     mov     byte [clienthello+5], 1 ; client_hello
-    sub eax, 4
+    sub     eax, 4
     mov     byte [clienthello+6], 0
     mov     byte [clienthello+7], ah
     mov     byte [clienthello+8], al
@@ -217,7 +211,7 @@ handshake:
     ;mov            dword[clienthello+11] , edx
     ; we use random time
     DEBUGF  1, "Generating RandomValues\n"
-    mov edi, clienthello+11
+    mov     edi, clienthello+11
     call    MBRandom
     stosd
     call    MBRandom
@@ -237,7 +231,7 @@ handshake:
     ;
     mov     esi,clienthello+11
     mov     ecx,32
-    stdcall add_to_buffer_master
+    stdcall add_to_buffer_randoms
     ;
     mov     byte [clienthello+43], 0
     mov     byte [clienthello+44], 0
@@ -254,7 +248,7 @@ handshake:
     ;send client hello
     mcall   send, [socketnum], clienthello, 50, 0
     cmp     eax, -1
-    je	    socket_err
+    je      socket_err
 
 
     mov     esi,clienthello+5
@@ -263,7 +257,7 @@ handshake:
 
     mcall   recv, [socketnum], serverAnswer, 79, 0 ;always constant size except error, add handler!
     cmp     eax, -1
-    je	    socket_err
+    je      socket_err
 
     mov     esi,serverAnswer+5
     mov     ecx,74
@@ -272,7 +266,7 @@ handshake:
     ;add
     mov     esi,serverAnswer+11
     mov     ecx,32
-    stdcall add_to_buffer_master
+    stdcall add_to_buffer_randoms
     ;
     ;check for version
     cmp     dword [serverAnswer],0x030316
@@ -300,9 +294,10 @@ handshake:
     mov     dword [sessionid+28],eax
     ;sessionid saved
     ; parse certificate message
+    ; TODO rewrite into one message(It will be more correct)
     mcall   recv, [socketnum], serverAnswer, 9, 0
     cmp     eax, -1
-    je	    socket_err
+    je      socket_err
 
     mov     esi,serverAnswer+5
     mov     ecx,4
@@ -319,28 +314,28 @@ handshake:
     mov     ecx,eax
     push    ecx
     DEBUGF  1, "TLS: lengh of certificate %d\n",eax
-    push eax
-    add eax,9;to   recieve serverhello done
+    push    eax
+    add     eax,9;to   recieve serverhello done
     ;read certificate, site for reading der format http://www.lapo.it/asn1js/
     mcall   recv, [socketnum], serverAnswer, [eax], 0
     cmp     eax, -1
-    je	    socket_err
+    je      socket_err
 
-    pop eax
+    pop     eax
     ;add certificate message to buffer
     mov     esi,serverAnswer
     mov     ecx,eax
     stdcall add_to_buffer
     
     ;check hello done
-    add eax,5
-    cmp dword[serverAnswer+eax],0x0000000e
-    jne serverhello_error
+    add     eax,5
+    cmp     dword[serverAnswer+eax],0x0000000e
+    jne     serverhello_error
 
 
     ;add hello done to buffer
-    mov esi,serverAnswer
-    add esi,eax
+    mov     esi,serverAnswer
+    add     esi,eax
     mov     ecx,4
     stdcall add_to_buffer
 
@@ -353,7 +348,7 @@ handshake:
     ; find object 1.2.840.113549.1.1.1 in ASN corresponds public key in HEX (06092A864886F70D010101)
 
     cmp     dword[serverAnswer+ebx],0x0101010d
-    je	    .find
+    je      .find
     inc     ebx
     dec     ecx
     cmp     ecx,0
@@ -390,7 +385,7 @@ handshake:
     ;DEBUGF  1, "TLS: Reciening server hello!!!\n"
     ;mcall   recv, [socketnum], clienthello, 5, 0
     ;cmp     eax, -1
-    ;je	    socket_err
+    ;je     socket_err
     ;check
     ;cmp dword[clienthello+5],0x0000000e
     ;jne serverhello_error
@@ -399,31 +394,28 @@ handshake:
     ;mov     ecx,4
     ;stdcall add_to_buffer
 
-    ;--------------------- Jeffrey -------------------------------;
-    ;------------------Look here please --------------------------;
-
     DEBUGF  1, "TLS: Start calculating!!!\n"
     ; Exponent for Modexp! Small-Endian
 
     ; TODO exponent from certificate
 
-    DEBUGF  1, "TLS: Exponent: \n"
+    ;DEBUGF  1, "TLS: Exponent: \n"
     mov     dword[exponent],4
     mov     dword[exponent+4],65537
     stdcall mpint_length, exponent
-    stdcall mpint_print, exponent
+    ;stdcall mpint_print, exponent
 
 
     ; Modulus for Modexp! Big-Endian
     mov     eax,512
     bswap   eax
     mov     dword[RSApublicK],eax
-    DEBUGF  1, "TLS: PublicKey mod: \n"
+    ;DEBUGF  1, "TLS: PublicKey mod: \n"
     ; Convert Modulus to Small-Endian
     mov esi,RSApublicK
     mov edi,RSA_Modulus
     call    mpint_to_little_endian
-    stdcall mpint_print, RSA_Modulus
+    ;stdcall mpint_print, RSA_Modulus
 
     ;---------------TLS Client key Exchange Message--------------------
     ; 16 03 03 02 06 10 00 02 02 02 00
@@ -461,12 +453,13 @@ handshake:
     ; one more like padding
     call    MBRandom
     stosd
+    ; set tls version
     mov     byte[premasterKey+50],0x03
     mov     byte[premasterKey+51],0x03
     mov     byte[premasterKey+52],0x00
     
     stdcall mpint_length, premasterKey
-    stdcall mpint_print, premasterKey
+    ;stdcall mpint_print, premasterKey
 
     ; Calculate Modexp in Small-Endian
     stdcall mpint_modexp, buffer_buffer, premasterKey, exponent, RSA_Modulus
@@ -491,7 +484,7 @@ handshake:
 
     mcall   send, [socketnum], clientKeyMessage, 523, 0
     cmp     eax, -1
-    je	    socket_err
+    je      socket_err
 
     mov     esi,clientKeyMessage+5
     mov     ecx,518
@@ -500,12 +493,12 @@ handshake:
 
     ;---------------Change cipher spec message --------------------------
     ; 14 03 03 00 01 01
-    mov dword[clienthello], 0x00030314
-    mov word[clienthello+4],0x0101
+    mov     dword[clienthello], 0x00030314
+    mov     word[clienthello+4],0x0101
 
     mcall   send, [socketnum], clienthello, 6, 0
     cmp     eax, -1
-    je	    socket_err
+    je      socket_err
 
 
     ;Convert Premaster to Big-Endian
@@ -526,21 +519,21 @@ handshake:
 
     ;remove later!!! delete zero
 
-    cmp byte[buffer_buffer+8],0x00
-    je .a
-    mov ebx,buffer_buffer+8
-    jmp .b
+    cmp     byte[buffer_buffer+8],0x00
+    je      .a
+    mov     ebx,buffer_buffer+8
+    jmp     .b
     .a:
-    mov  ebx,buffer_buffer+9
+    mov     ebx,buffer_buffer+9
     .b:
 
 
 
     DEBUGF  1, "premaster\n"
-    stdcall print_number48bytes,buffer_buffer+8
-    mov edx,48
-    mov eax,randoms_buffer
-    mov esi,64
+    stdcall print_numberNbytes,buffer_buffer+8,12
+    mov     edx,48
+    mov     eax,randoms_buffer
+    mov     esi,64
     stdcall prf, master_str, master_str.length,masterKey
     DEBUGF  1, "MasterKey:\n"
     ; Sometimes appears bugs!
@@ -551,15 +544,15 @@ handshake:
     mov     esi, randoms_buffer
     mov     edi, randoms_buffer+64
     mov     ecx, 32/4
-    rep movsd
+    rep     movsd
 
     ; calculate keys
-    mov ebx,masterKey
-    mov edx,48
-    mov eax,randoms_buffer+32
-    mov esi,64
+    mov     ebx,masterKey
+    mov     edx,48
+    mov     eax,randoms_buffer+32
+    mov     esi,64
     stdcall prf, keyExpansion_label, keyExpansion_label.length,session_keys
-    DEBUGF	1, "TLS:Session Keys Were Saved\n"
+    DEBUGF  1, "TLS:Session Keys Were Saved\n"
 
 
 ; finished message = PRF(master_secret, finished_label, Hash(handshake_messages))[0..verify_data_length-1];
@@ -572,77 +565,78 @@ handshake:
     call    sha256_update
     mov     edi,buffer_buffer
     call    sha256_final
-    DEBUGF	1, "TLS: Hash of Messages calculated\n"
+    DEBUGF  1, "TLS: Hash of Messages calculated\n"
     ; l(32) bytes in buffer_buffer are my SHA256(handshake_message_buffer)
 
 
     ;finished message header 16 03 03 00 40
-    mov dword[serverAnswer],0x00030316
-    mov byte[serverAnswer+4],0x50
+    mov     dword[serverAnswer],0x00030316
+    mov     byte[serverAnswer+4],0x50
 
     ;14 00 00 0C first bytes in encrypt part
 
-    mov dword[exponent],0x0c000014
+    mov     dword[exponent],0x0c000014
     ; calculate verify data
-    mov ebx,masterKey
-    mov edx,48
-    mov eax, buffer_buffer
-    mov esi,l
+    mov     ebx,masterKey
+    mov     edx,48
+    mov     eax, buffer_buffer
+    mov     esi,l
     stdcall prf, finished_label, finished_label.length,exponent+4
-    DEBUGF	1, "TLS: Verify Data calculated\n"
+    DEBUGF  1, "TLS: Verify Data calculated\n"
     ;now exponent has 4hdr+ 12 bytes verify data
     ;stdcall tls_send,[socketnum], exponent, 16,0
 
 
-    ;send Finished message---------------------------------------------
-    mov dword[bufferptr],0x00030316
-    mov byte[bufferptr+4],0x50
-	mov     esi, iv
+    ;----------send Finished message---------------------------------------------
+    mov     dword[bufferptr],0x00030316
+    mov     byte[bufferptr+4],0x50
+    mov     esi, iv
     mov     edi, bufferptr+5
     mov     ecx, 16/4
-    rep movsd
+    rep     movsd
     ;need to calculate MAC of buf
     ; Message authentication for FinishedMessage
     ;length 
+
     ;IT SHOULD BE OK
-    mov dword[msg],0
-    mov dword[msg+4],0
+
+    mov     dword[msg],0
+    mov     dword[msg+4],0
     ;type
-    mov byte[msg+8],0x16
+    mov     byte[msg+8],0x16
     ;version
-    mov word[msg+9],0x0303
+    mov     word[msg+9],0x0303
     ;length of message
-    mov byte[msg+11],0x00
-    mov byte[msg+12],0x10
+    mov     byte[msg+11],0x00
+    mov     byte[msg+12],0x10
     ;+info
 
-    mov ebx,session_keys.client_mac
-    mov edx,32
-    stdcall    hmac_setkey, tmp_buffer
+    mov     ebx,session_keys.client_mac
+    mov     edx,32
+    stdcall hmac_setkey, tmp_buffer
 
-    mov eax,msg
-    mov edi,13
+    mov     eax,msg
+    mov     edi,13
     stdcall hmac_hash,tmp_buffer
 
-    mov eax,exponent
-    mov edi,16
+    mov     eax,exponent
+    mov     edi,16
     stdcall hmac_add, tmp_buffer
 
-    mov edi,exponent
-    add edi,16
-    push edi
+    mov     edi,exponent
+    add     edi,16
+    push    edi
     stdcall hmac_final, tmp_buffer
     ;mac added
-
-    pop edi
-    add edi,32
-    mov dword[edi],0x0f0f0f0f
-    add edi,4
-    mov dword[edi],0x0f0f0f0f
-    add edi,4
-    mov dword[edi],0x0f0f0f0f
-    add edi,4
-    mov dword[edi],0x0f0f0f0f
+    pop     edi
+    add     edi,32
+    mov     dword[edi],0x0f0f0f0f
+    add     edi,4
+    mov     dword[edi],0x0f0f0f0f
+    add     edi,4
+    mov     dword[edi],0x0f0f0f0f
+    add     edi,4
+    mov     dword[edi],0x0f0f0f0f
     ;padding
 
     stdcall aes256_cbc_init, iv
@@ -652,11 +646,11 @@ handshake:
     DEBUGF 1,'CLient_enc Key\n'
     stdcall print_numberNbytes,session_keys.client_enc,8
 
-    mov edi,bufferptr+21
-    mov esi,exponent
-    DEBUGF 1,'ToEncrypt\n'
-    stdcall print_numberNbytes,exponent,16
-    mov ecx,4
+    mov     edi,bufferptr+21
+    mov     esi,exponent
+    ;DEBUGF  1,'ToEncrypt\n'
+    ;stdcall print_numberNbytes,exponent,16
+    mov     ecx,4
     @@:
         push    ecx
         stdcall aes256_cbc_encrypt, ebx, esi, edi
@@ -665,11 +659,8 @@ handshake:
         add     edi, 16
         loop    @r
 
-    ;to send
-    DEBUGF 1,'ToSend\n'
-    stdcall print_numberNbytes,bufferptr,22
     
-    DEBUGF 1,'Encrypted Succesful\n'
+    DEBUGF  1,'Encrypt Succesful\n'
     mcall   send, [socketnum], bufferptr, 85, 0
     cmp     eax, -1
     je      socket_err
@@ -681,27 +672,31 @@ handshake:
     ; Recieve Сhange cipher message
     mcall   recv, [socketnum], clienthello, 6, 0
     cmp     eax, -1
-    je	    socket_err
-    cmp byte[clienthello],0x14
-    jne socket_err; change error
+    je      socket_err
+    cmp     byte[clienthello],0x14
+    jne     socket_err; change error
 
     ;-------------------------------------------------------------------
 
     ; Recieve Finished message from server
     mcall   recv, [socketnum], buffer_buffer, 85, 0
     cmp     eax, -1
-    je	    socket_err
+    je      socket_err
 
-    ;TODO check FInished message from Server
+    ;TODO check Finished message from Server
 
     ;-------------------------------------------------------------------
-
+    invoke  con_write_asciiz, str14
+    stdcall tls_recieve, [socketnum], buffer_buffer, 117, 0
+    mov     dword[buffer_buffer+61],0
+    invoke  con_write_asciiz, buffer_buffer
+    ;stdcall print_TextNbytes, buffer_buffer,64
 
 
 exit:
-	DEBUGF	1, "TLS: Exiting\n"
-	mcall	close, [socketnum]
-	mcall	-1
+    DEBUGF  1, "TLS: Exiting\n"
+    mcall   close, [socketnum]
+    mcall   -1
 
 socket_err:
     DEBUGF  1, "TLS: socket error %d\n", ebx
@@ -727,33 +722,34 @@ certificate_error:
 
 
 ; data
-title	db  'Secure Shell',0
-str1	db  'TLS client for KolibriOS',10,10,\
-	'Please enter URL of TLS server (host:port)',10,10,0
-str2	db  '> ',0
-str3	db  'Connecting to ',0
-str4	db  10,0
-str5	db  'Name resolution failed.',10,10,0
-str6	db  'A socket error occured.',10,10,0
-str7	db  'A protocol error occured.',10,10,0
-str8	db  ' (',0
-str9	db  ')',10,0
-str10	db  'Invalid hostname.',10,10,0
-str11	db  10,'Remote host closed the connection.',10,10,0
-str12	db  'Server Hello error.',10,10,0
-str13	db  'certificate error.',10,10,0
+title   db  'Secure Shell',0
+str1    db  'TLS client for KolibriOS',10,10,\
+    'Please enter URL of TLS server (host:port)',10,10,0
+str2    db  '> ',0
+str3    db  'Connecting to ',0
+str4    db  10,0
+str5    db  'Name resolution failed.',10,10,0
+str6    db  'A socket error occured.',10,10,0
+str7    db  'A protocol error occured.',10,10,0
+str8    db  ' (',0
+str9    db  ')',10,0
+str10   db  'Invalid hostname.',10,10,0
+str11   db  10,'Remote host closed the connection.',10,10,0
+str12   db  'Server Hello error.',10,10,0
+str13   db  'certificate error.',10,10,0
+str14   db  'TLS connected',10,10,0
 
 master_str: 
-	db 'master secret',0
-	.length = $ - master_str - 1
+    db 'master secret',0
+    .length = $ - master_str - 1
 
 finished_label: 
-	db 'client finished',0
-	.length = $ - finished_label - 1
+    db 'client finished',0
+    .length = $ - finished_label - 1
 
 keyExpansion_label: 
-	db 'key expansion',0
-	.length = $ - keyExpansion_label - 1
+    db 'key expansion',0
+    .length = $ - keyExpansion_label - 1
 
 
 
@@ -761,18 +757,18 @@ keyExpansion_label:
 sockaddr1:
     dw AF_INET4
   .port dw 0
-  .ip	dd 0
+  .ip   dd 0
     rb 10
 
 ;2 x 32 byte keys and 2 x 32 bytes MAC keys
 session_keys:
-	.client_mac rb 32
-	.server_mac rb 32
-	.client_enc rb 32
-	.server_enc rb 32
+    .client_mac rb 32
+    .server_mac rb 32
+    .client_enc rb 32
+    .server_enc rb 32
 
 ciphersuites:
-	db  0x00, 0x2f	; TLS_RSA_WITH_AES_128_CBC_SHA          ; spec says we MUST support this one.
+    db  0x00, 0x2f  ; TLS_RSA_WITH_AES_128_CBC_SHA          ; spec says we MUST support this one.
     .length = $ - ciphersuites
 
 
@@ -781,46 +777,36 @@ ciphersuites:
 ;function which add handshake messages to buffer
 ;input esi->message,ecx=size of message
 proc add_to_buffer
-	push eax
-	push ecx
-	mov edi,handshake_message_buffer
-	add edi,[handshake_buffer_size]
-	rep movsb
-	pop ecx
-	mov eax,[handshake_buffer_size]
-	add eax,ecx
-	mov [handshake_buffer_size],eax
-	pop eax
-	ret
+    push eax
+    push ecx
+    mov edi,handshake_message_buffer
+    add edi,[handshake_buffer_size]
+    rep movsb
+    pop ecx
+    mov eax,[handshake_buffer_size]
+    add eax,ecx
+    mov [handshake_buffer_size],eax
+    pop eax
+    ret
 endp
 
 ;function which add data to prf buffer
 ;input esi->message,ecx=size of message
-proc add_to_buffer_master
-	push ecx
-	mov edi,randoms_buffer
-	add edi,[randoms_buffer_size]
-	rep movsb
-	pop ecx
-	mov eax,[randoms_buffer_size]
-	add eax,ecx
-	mov [randoms_buffer_size],eax
-	ret
+proc add_to_buffer_randoms
+    push ecx
+    mov edi,randoms_buffer
+    add edi,[randoms_buffer_size]
+    rep movsb
+    pop ecx
+    mov eax,[randoms_buffer_size]
+    add eax,ecx
+    mov [randoms_buffer_size],eax
+    ret
 endp
 
-proc print_number48bytes _ptr
-        pushad
-        mov     esi, [_ptr]
-        mov     ecx, 12
-.next_dword:
-        lodsd
-        bswap eax
-        DEBUGF  1,'%x',eax
-        loop    .next_dword
-        DEBUGF  1,'\n'
-        popad
-        ret
-endp
+
+;debug print functions
+
 proc print_numberNbytes _ptr,n
         pushad
         mov     esi, [_ptr]
@@ -835,19 +821,20 @@ proc print_numberNbytes _ptr,n
         ret
 endp
 
-proc print_number512bytes _ptr
+proc print_TextNbytes _ptr,n
         pushad
         mov     esi, [_ptr]
-        mov     ecx, 128
+        mov     ecx, [n]
 .next_dword:
         lodsd
         bswap eax
-        DEBUGF  1,'%x',eax
+        DEBUGF  1,'%s',eax
         loop    .next_dword
         DEBUGF  1,'\n'
         popad
         ret
 endp
+
 
 
 ; import
@@ -859,12 +846,12 @@ library network, 'network.obj', \
     console, 'console.obj';, \
 ;        libcrash, 'libcrash.obj'
 
-import	network, \
+import  network, \
     getaddrinfo, 'getaddrinfo', \
     freeaddrinfo, 'freeaddrinfo', \
     inet_ntoa, 'inet_ntoa'
 
-import	console, \
+import  console, \
     con_start, 'START', \
     con_init, 'con_init', \
     con_write_asciiz, 'con_write_asciiz', \
@@ -881,6 +868,7 @@ IncludeUGlobals
 i_end:
 
 IncludeIGlobals
+;variables
 socketnum   dd ?
 clienthello rb 64
 sessionid   rb 32
@@ -888,7 +876,6 @@ hostname    rb 1024
 serverAnswer rb 4048
 RSApublicK rb MPINT_MAX_LEN+4 ; p*q
 RSA_Modulus rb MPINT_MAX_LEN+4
-second	rb 10
 exponent rb MPINT_MAX_LEN+4 ; e
 buffer_buffer rb MPINT_MAX_LEN+4 ;
 clientKeyMessage rb MPINT_MAX_LEN+4 ;
