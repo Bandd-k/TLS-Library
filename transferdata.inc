@@ -21,27 +21,47 @@
 ;input data,size of data
 bufferptr       rb 4096
 msg             rb 4096
+padding         rb 1
 proc tls_send sock, buf, size, flags
+; message structure header 00030317+ size in big endian(2 bytes) + IV(16 bytes) +Encrypted(buf+mac(32bytes)+padding)
 ; copy iv to start of message
-    mov dword[bufferptr],0x00030316
-    mov byte[bufferptr+4],0x50
+    mov dword[bufferptr],0x00030317
+    ; bufferptr + 4 should be whole size!!
+    ;calculate padding size;
+    mov eax,[size]
+    xor edx,edx ;clear the destinations for outputs. 
+    mov ecx,16
+    div ecx
+    mov eax,16
+    sub eax,edx
+    mov byte[padding],0x0f
+    cmp eax,0
+    je  .ok
+    dec eax
+    mov byte[padding],al
+    .ok:
+
+    ;copy IV 
 	mov     esi, iv
     mov     edi, bufferptr+5
     mov     ecx, 16/4
     rep movsd
     ;need to calculate MAC of buf
-    ; Message authentication for FinishedMessage
+    ; Message authentication
     ;length 
     ;IT SHOULD BE OK
     mov dword[msg],0
-    mov dword[msg+4],0
+    mov eax,dword[seq_number]
+    bswap eax
+    mov dword[msg+4],eax
     ;type
-    mov byte[msg+8],0x16
+    mov byte[msg+8],0x17
     ;version
     mov word[msg+9],0x0303
-    ;length of message
-    mov byte[msg+11],0x00
-    mov byte[msg+12],0x10
+    ;length of message (2 bytes)
+    mov eax,[size] 
+    xchg    al, ah
+    mov word[msg+11],ax
     ;+info
 
     mov ebx,session_keys.client_mac
@@ -53,25 +73,19 @@ proc tls_send sock, buf, size, flags
     stdcall hmac_hash,tmp_buffer
 
     mov eax,[buf]
-    mov edi,16
+    mov edi,[size]
     stdcall hmac_add, tmp_buffer
 
     mov edi,[buf]
-    add edi,16
+    add edi,[size]
     push edi
     stdcall hmac_final, tmp_buffer
     ;mac added
 
     pop edi
     add edi,32
-    mov dword[edi],0x0f0f0f0f
-    add edi,4
-    mov dword[edi],0x0f0f0f0f
-    add edi,4
-    mov dword[edi],0x0f0f0f0f
-    add edi,4
-    mov dword[edi],0x0f0f0f0f
-    ;padding
+    ;fill padding in edi there
+
 
     stdcall aes256_cbc_init, iv
     ; returns context, save it to ebx
@@ -84,6 +98,9 @@ proc tls_send sock, buf, size, flags
     mov esi,[buf]
     DEBUGF 1,'ToEncrypt\n'
     stdcall print_numberNbytes,[buf],16
+
+    ;mov ecx,[padding]
+
     mov ecx,4
     @@:
         push    ecx
@@ -91,7 +108,9 @@ proc tls_send sock, buf, size, flags
         pop     ecx
         add     esi, 16
         add     edi, 16
-        loop    @r
+        sub     ecx,16
+    cmp ecx,0
+    jne    @r
 
     ;to send
     DEBUGF 1,'ToSend\n'
@@ -157,9 +176,8 @@ proc mac, content
 endp
 
 
-version db 0x03,0x03; tls 1.2 version
-type db 0x14 ; FInishedMessage
 
+seq_number dd 0
 
 key db      0x60,0x3d,0xeb,0x10,0x15,0xca,0x71,0xbe,0x2b,0x73,0xae,0xf0,\
             0x85,0x7d,0x77,0x81,0x1f,0x35,0x2c,0x07,0x3b,0x61,0x08,0xd7,\
