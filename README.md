@@ -25,6 +25,11 @@ There is a [tiny TLS 1.2 Library](https://github.com/Bandd-k/TLS-Library). It su
 * TLS handshake. Make convinient function
 * It is not real library now. I need to make real library :)
 
+### Known Issues
+
+* Encrypt premaster key can be incorrect
+* Didn't test on chain of certificates
+
 ### Plans for the future
 
 * Optimize some parts of code
