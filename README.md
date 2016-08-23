@@ -16,19 +16,19 @@ There is a [tiny TLS 1.2 Library](https://github.com/Bandd-k/TLS-Library). It su
 * [Basic TLS recieve function](https://tls.mbed.org/api/)
 * [Basic TLS send function](https://tls.mbed.org/api/)
 * Combine together existing AES and SHA modules with my code into application, which succesfully connects to server
-* Patched [TLSEcho server for DebianOS](https://2ton.com.au/HeavyThing/#tlsechoserver) to print all debug information
+* Patched [TLSEcho server for DebianOS](https://github.com/Bandd-k/TLS-Library/tree/master/TestServer) to print all debug information
 * [Demo](http://recordit.co/Zxyxz2hlYl)
 
 ### What's left to do
 
 * TEST!!! Main part was not enough tested
 * TLS handshake. Make convinient function
-* It is not real library now. I need to make real library :)
+* It is not completed library now. I need to make real library from application and library parts :)
 
 ### Known Issues
 
-* Encrypt premaster key can be incorrect
-* Didn't test on chain of certificates
+* Encryption premaster key sometimes is wrong
+* Application was not tested on chain of certificates
 
 ### Plans for the future
 
