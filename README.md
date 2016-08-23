@@ -1,7 +1,7 @@
 # Google Summer of Code 2016
 
 **Project**: [Development of TLS library for KolibriOS](https://summerofcode.withgoogle.com/projects/#5973545913942016)  
-**Organization**: [JBoss Community](http://kolibrios.org)  
+**Organization**: [KolibriOS](http://kolibrios.org)  
 **Mentors**: Jeffrey Amelynck,Pathoswithin  
 **Student**: [Denis Karpenko](https://github.com/bandd-k)  
 **University**: [National Research University Higher School of Economics](https://www.hse.ru/en/) 
